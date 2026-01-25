@@ -79,6 +79,9 @@ No-terminal launch (macOS):
 
 Tip: to avoid entering your token each time, set `DISCOGS_TOKEN` in your environment (or create a `.env` file in the project directory).
 
+UI note:
+- If `ttkbootstrap` is installed (it’s included in `requirements.txt`), the Auto-Sort GUI uses a more modern themed look (colors and nicer button styles). If it’s not installed, it falls back to standard Tkinter styling.
+
 ## Customization
 
 Push Various Artists to the end:

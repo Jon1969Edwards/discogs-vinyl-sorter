@@ -36,6 +36,12 @@ from tkinter import Tk, StringVar, BooleanVar, IntVar, ttk, filedialog, messageb
 import discogs_app as core
 
 
+try:
+  import ttkbootstrap as ttkb  # type: ignore
+except Exception:
+  ttkb = None  # type: ignore
+
+
 POLL_SECONDS_DEFAULT = 300  # 5 minutes
 
 
@@ -111,12 +117,14 @@ class App:
       pass
 
     self.style = ttk.Style()
-    try:
-      # 'clam' tends to look a bit more modern/cross-platform than the default.
-      if "clam" in self.style.theme_names():
-        self.style.theme_use("clam")
-    except Exception:
-      pass
+    self._has_bootstrap = ttkb is not None
+    if not self._has_bootstrap:
+      try:
+        # 'clam' tends to look a bit more modern/cross-platform than the default.
+        if "clam" in self.style.theme_names():
+          self.style.theme_use("clam")
+      except Exception:
+        pass
 
     self.v_token = StringVar(value="")
     self.v_show_token = BooleanVar(value=False)
@@ -211,10 +219,16 @@ class App:
 
     btn = ttk.Frame(frm)
     btn.grid(row=row, column=0, columnspan=2, sticky="w", **pad)
-    ttk.Button(btn, text="Refresh Now", command=self._refresh_now).grid(row=0, column=0, padx=(0, 6))
-    ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, padx=(0, 6))
-    ttk.Button(btn, text="Print…", command=self._print_current).grid(row=0, column=2, padx=(0, 6))
-    ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, padx=(0, 6))
+    if self._has_bootstrap:
+      ttk.Button(btn, text="Refresh Now", command=self._refresh_now, style="primary.TButton").grid(row=0, column=0, padx=(0, 6))
+      ttk.Button(btn, text="Export TXT/CSV", command=self._export_files, style="secondary.TButton").grid(row=0, column=1, padx=(0, 6))
+      ttk.Button(btn, text="Print…", command=self._print_current, style="success.TButton").grid(row=0, column=2, padx=(0, 6))
+      ttk.Button(btn, text="Stop", command=self._stop_app, style="danger.TButton").grid(row=0, column=3, padx=(0, 6))
+    else:
+      ttk.Button(btn, text="Refresh Now", command=self._refresh_now).grid(row=0, column=0, padx=(0, 6))
+      ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, padx=(0, 6))
+      ttk.Button(btn, text="Print…", command=self._print_current).grid(row=0, column=2, padx=(0, 6))
+      ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, padx=(0, 6))
     row += 1
 
     nb = ttk.Notebook(frm)
@@ -478,7 +492,11 @@ class App:
 
 
 def main() -> None:
-  root = Tk()
+  if ttkb is not None:
+    # Modern-looking theme/colors (optional dependency).
+    root = ttkb.Window(themename="flatly")
+  else:
+    root = Tk()
   try:
     root.call("tk", "scaling", 1.2)
   except Exception:
