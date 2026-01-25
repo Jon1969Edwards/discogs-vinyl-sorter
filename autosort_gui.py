@@ -102,7 +102,8 @@ def build_once(cfg: AutoConfig, log: callable) -> BuildResult:
     log("No matching LPs found.")
     return BuildResult(username=username, rows_sorted=[], lines=[])
 
-  rows_sorted = core.sort_rows(rows, "title")
+  # Canonical sort: smart artist sorting + file Various Artists by title
+  rows_sorted = core.sort_rows(list(rows), "title")
   lines = core.generate_txt_lines(rows_sorted, dividers=False, align=False, show_country=False)
   return BuildResult(username=username, rows_sorted=rows_sorted, lines=lines)
 
@@ -128,7 +129,6 @@ class App:
 
     self.v_token = StringVar(value="")
     self.v_show_token = BooleanVar(value=False)
-    self.v_user_agent = StringVar(value="VinylSorter/1.0 (+contact)")
     self.v_output_dir = StringVar(value=str(Path.cwd()))
     self.v_per_page = IntVar(value=100)
     self.v_json = BooleanVar(value=False)
@@ -182,10 +182,6 @@ class App:
     self.token_entry = ttk.Entry(settings, textvariable=self.v_token, width=44, show="•")
     self.token_entry.grid(row=srow, column=1, sticky="ew", **pad)
     ttk.Checkbutton(settings, text="Show", variable=self.v_show_token, command=self._toggle_token_visibility).grid(row=srow, column=2, sticky="w", **pad)
-    srow += 1
-
-    ttk.Label(settings, text="User-Agent").grid(row=srow, column=0, sticky="w", **pad)
-    ttk.Entry(settings, textvariable=self.v_user_agent, width=44).grid(row=srow, column=1, sticky="ew", **pad)
     srow += 1
 
     out_row = ttk.Frame(settings)
@@ -372,7 +368,7 @@ class App:
   def _get_cfg(self) -> AutoConfig:
     return AutoConfig(
       token=self.v_token.get().strip(),
-      user_agent=self.v_user_agent.get().strip() or "VinylSorter/1.0 (+contact)",
+      user_agent=core.get_user_agent(None),
       output_dir=self.v_output_dir.get().strip() or str(Path.cwd()),
       per_page=max(1, min(int(self.v_per_page.get() or 100), 100)),
       write_json=bool(self.v_json.get()),

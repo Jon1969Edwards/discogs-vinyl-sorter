@@ -47,6 +47,24 @@ API_BASE = "https://api.discogs.com"
 VERSION = "0.2.0"
 
 
+DEFAULT_USER_AGENT = "VinylSorter/1.0 (+contact)"
+
+
+def get_user_agent(user_agent: Optional[str]) -> str:
+  """Resolve the User-Agent header.
+
+  Precedence:
+  1) Explicit argument (CLI/GUI)
+  2) DISCOGS_USER_AGENT env var
+  3) DEFAULT_USER_AGENT
+  """
+  ua = (user_agent or "").strip()
+  if ua:
+    return ua
+  env_ua = (os.getenv("DISCOGS_USER_AGENT") or "").strip()
+  return env_ua or DEFAULT_USER_AGENT
+
+
 @dataclass
 class ReleaseRow:
   artist_display: str
@@ -58,6 +76,8 @@ class ReleaseRow:
   format_str: str
   discogs_url: str
   notes: str
+  primary_genre: str = ""
+  primary_style: str = ""
   release_id: Optional[int] = None
   # Keys used only for sorting
   sort_artist: str = ""
@@ -83,7 +103,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     "--user-agent",
-    default="VinylSorter/1.0 (+contact)",
+    default=DEFAULT_USER_AGENT,
     help="User-Agent header per Discogs API policy (include a way to contact you).",
   )
   parser.add_argument(
@@ -195,7 +215,7 @@ def get_token(args_token: Optional[str]) -> str:
 def discogs_headers(token: str, user_agent: str) -> Dict[str, str]:
   return {
     "Authorization": f"Discogs token={token}",
-    "User-Agent": user_agent,
+    "User-Agent": get_user_agent(user_agent),
     "Accept": "application/json",
   }
 
@@ -548,6 +568,10 @@ def build_release_row(
   year = int(year_raw) if (year_raw and str(year_raw).isdigit()) else None
   label, catno = label_and_catno(basic)
   fmt_desc = format_string(basic)
+  genres = basic.get("genres") or []
+  styles = basic.get("styles") or []
+  primary_genre = (genres[0] if isinstance(genres, list) and genres else "") or ""
+  primary_style = (styles[0] if isinstance(styles, list) and styles else "") or ""
   rel_id = basic.get("id")
   url = f"https://www.discogs.com/release/{rel_id}" if rel_id else ""
   sort_artist, sort_title = make_sort_keys(
@@ -569,6 +593,8 @@ def build_release_row(
     format_str=fmt_desc,
     discogs_url=url,
     notes=(item.get("notes") or ""),
+    primary_genre=primary_genre,
+    primary_style=primary_style,
     release_id=int(rel_id) if isinstance(rel_id, int) or (isinstance(rel_id, str) and rel_id.isdigit()) else None,
     sort_artist=sort_artist,
     sort_title=sort_title,
@@ -619,6 +645,10 @@ def collect_lp_rows(
     year = int(year_raw) if (year_raw and str(year_raw).isdigit()) else None
     label, catno = label_and_catno(basic)
     fmt_desc = format_string(basic)
+    genres = basic.get("genres") or []
+    styles = basic.get("styles") or []
+    primary_genre = (genres[0] if isinstance(genres, list) and genres else "") or ""
+    primary_style = (styles[0] if isinstance(styles, list) and styles else "") or ""
     rel_id = basic.get("id")
     url = f"https://www.discogs.com/release/{rel_id}" if rel_id else ""
     sort_artist, sort_title = make_sort_keys(
@@ -640,6 +670,8 @@ def collect_lp_rows(
       format_str=fmt_desc,
       discogs_url=url,
       notes=(item.get("notes") or ""),
+      primary_genre=primary_genre,
+      primary_style=primary_style,
       release_id=int(rel_id) if isinstance(rel_id, int) or (isinstance(rel_id, str) and rel_id.isdigit()) else None,
       sort_artist=sort_artist,
       sort_title=sort_title,

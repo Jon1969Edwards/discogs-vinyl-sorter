@@ -58,7 +58,6 @@ class App:
 
     # State vars
     self.v_token = StringVar(value="")
-    self.v_user_agent = StringVar(value="VinylSorter/1.0 (+contact)")
     self.v_output_dir = StringVar(value=str(Path.cwd()))
     self.v_per_page = IntVar(value=100)
     self.v_max_pages = StringVar(value="")  # blank means None
@@ -95,9 +94,6 @@ class App:
     row = 0
     ttk.Label(frm, text="Token (optional)").grid(row=row, column=0, sticky="w", **pad)
     ttk.Entry(frm, textvariable=self.v_token, width=44).grid(row=row, column=1, sticky="ew", **pad)
-    row += 1
-    ttk.Label(frm, text="User-Agent").grid(row=row, column=0, sticky="w", **pad)
-    ttk.Entry(frm, textvariable=self.v_user_agent, width=44).grid(row=row, column=1, sticky="ew", **pad)
     row += 1
 
     out_row = ttk.Frame(frm)
@@ -285,7 +281,7 @@ class App:
   def _run_clicked(self) -> None:
     cfg = RunConfig(
       token=self.v_token.get().strip(),
-      user_agent=self.v_user_agent.get().strip() or "VinylSorter/1.0 (+contact)",
+      user_agent=core.get_user_agent(None),
       output_dir=self.v_output_dir.get().strip() or str(Path.cwd()),
       per_page=max(1, min(int(self.v_per_page.get() or 100), 100)),
       max_pages=int(self.v_max_pages.get()) if self.v_max_pages.get().strip().isdigit() else None,
