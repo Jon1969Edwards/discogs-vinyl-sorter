@@ -118,26 +118,6 @@ class App:
     except Exception:
       pass
 
-    # Palette (best-effort; note: macOS may still use native button chrome)
-    self._colors = {
-      "bg": "#0f172a",        # slate-900
-      "panel": "#111827",     # gray-900
-      "panel2": "#0b1220",    # darker
-      "text": "#e5e7eb",      # gray-200
-      "muted": "#94a3b8",     # slate-400
-      "accent": "#6366f1",    # indigo-500
-      "accent2": "#22c55e",   # green-500
-      "warn": "#f59e0b",      # amber-500
-    }
-
-    try:
-      self.style.configure("App.TFrame", background=self._colors["panel2"])
-      self.style.configure("Card.TLabelframe", background=self._colors["panel"])  # may not affect on mac
-      self.style.configure("Card.TLabelframe.Label", foreground=self._colors["text"], background=self._colors["panel"])  # label bg may not apply
-      self.style.configure("TLabel", foreground="#111")
-    except Exception:
-      pass
-
     self.v_token = StringVar(value="")
     self.v_show_token = BooleanVar(value=False)
     self.v_user_agent = StringVar(value="VinylSorter/1.0 (+contact)")
@@ -169,43 +149,23 @@ class App:
     threading.Thread(target=self._watch_loop, daemon=True).start()
 
   def _build_ui(self, root: Tk) -> None:
-    pad = {"padx": 10, "pady": 8}
+    pad = {"padx": 8, "pady": 6}
 
-    # Main container
-    frm = ttk.Frame(root, style="App.TFrame")
+    frm = ttk.Frame(root)
     frm.grid(row=0, column=0, sticky="nsew")
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
     frm.columnconfigure(1, weight=1)
 
     row = 0
-    # Colored header bar (use tk widgets for reliable bg/fg)
-    import tkinter as tk
-    header = tk.Frame(frm, bg=self._colors["bg"], bd=0, highlightthickness=0)
-    header.grid(row=row, column=0, columnspan=2, sticky="ew", padx=0, pady=(0, 10))
+    header = ttk.Frame(frm)
+    header.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
     header.columnconfigure(0, weight=1)
-    tk.Label(
-      header,
-      text="Discogs Auto-Sort",
-      bg=self._colors["bg"],
-      fg=self._colors["text"],
-      font=("TkDefaultFont", 18, "bold"),
-      padx=14,
-      pady=10,
-    ).grid(row=0, column=0, sticky="w")
-    tk.Label(
-      header,
-      text="LPs only • Live sort view • Export/Print on demand",
-      bg=self._colors["bg"],
-      fg=self._colors["muted"],
-      font=("TkDefaultFont", 12),
-      padx=14,
-      pady=0,
-    ).grid(row=1, column=0, sticky="w")
+    ttk.Label(header, text="Discogs Auto-Sort", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(header, text="LPs only • Watches your collection and rebuilds automatically", foreground="#555").grid(row=1, column=0, sticky="w")
     row += 1
 
-    # Settings card
-    settings = ttk.LabelFrame(frm, text="Settings", style="Card.TLabelframe")
+    settings = ttk.LabelFrame(frm, text="Settings")
     settings.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
     settings.columnconfigure(1, weight=1)
     srow = 0
@@ -249,22 +209,19 @@ class App:
     self.v_search.trace_add("write", lambda *_: self._on_search_change())
     row += 1
 
-    # Action buttons row (more symmetrical)
     btn = ttk.Frame(frm)
-    btn.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
-    btn.columnconfigure(0, weight=1)
-    btn.columnconfigure(1, weight=1)
-    btn.columnconfigure(2, weight=1)
-    btn.columnconfigure(3, weight=1)
-    ttk.Button(btn, text="Refresh", command=self._refresh_now).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-    ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, sticky="ew", padx=(0, 8))
-    ttk.Button(btn, text="Print", command=self._print_current).grid(row=0, column=2, sticky="ew", padx=(0, 8))
-    ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, sticky="ew")
+    btn.grid(row=row, column=0, columnspan=2, sticky="w", **pad)
+    ttk.Button(btn, text="Refresh Now", command=self._refresh_now).grid(row=0, column=0, padx=(0, 6))
+    ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, padx=(0, 6))
+    ttk.Button(btn, text="Print…", command=self._print_current).grid(row=0, column=2, padx=(0, 6))
+    ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, padx=(0, 6))
     row += 1
 
     nb = ttk.Notebook(frm)
     nb.grid(row=row, column=0, columnspan=2, sticky="nsew", **pad)
     frm.rowconfigure(row, weight=1)
+
+    import tkinter as tk
 
     order_fr = ttk.Frame(nb)
     nb.add(order_fr, text="Shelf Order")
@@ -286,8 +243,6 @@ class App:
       wrap="none",
       yscrollcommand=order_scroll.set,
       font=("Menlo", 12),
-      background="#ffffff",
-      foreground="#0f172a",
     )
     self.order_text.grid(row=0, column=0, sticky="nsew")
     order_scroll.config(command=self.order_text.yview)
@@ -303,24 +258,13 @@ class App:
     log_wrap.columnconfigure(0, weight=1)
     log_scroll = ttk.Scrollbar(log_wrap, orient="vertical")
     log_scroll.grid(row=0, column=1, sticky="ns")
-    self.log = tk.Text(
-      log_wrap,
-      height=18,
-      width=90,
-      yscrollcommand=log_scroll.set,
-      font=("Menlo", 12),
-      background="#0b1220",
-      foreground="#e5e7eb",
-      insertbackground="#e5e7eb",
-    )
+    self.log = tk.Text(log_wrap, height=18, width=90, yscrollcommand=log_scroll.set, font=("Menlo", 12))
     self.log.grid(row=0, column=0, sticky="nsew")
     log_scroll.config(command=self.log.yview)
 
     # Status bar
-    status = tk.Frame(frm, bg=self._colors["bg"], bd=0, highlightthickness=0)
-    status.grid(row=row + 1, column=0, columnspan=2, sticky="ew", padx=0, pady=(10, 0))
-    status.columnconfigure(0, weight=1)
-    tk.Label(status, textvariable=self.v_status, bg=self._colors["bg"], fg=self._colors["text"], anchor="w", padx=14, pady=10).grid(row=0, column=0, sticky="ew")
+    status = ttk.Label(frm, textvariable=self.v_status, anchor="w")
+    status.grid(row=row + 1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
 
   def _choose_dir(self) -> None:
     directory = filedialog.askdirectory(initialdir=self.v_output_dir.get() or str(Path.cwd()))
