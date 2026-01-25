@@ -134,6 +134,8 @@ class App:
     self.v_json = BooleanVar(value=False)
     self.v_poll = IntVar(value=POLL_SECONDS_DEFAULT)
 
+    self.v_theme = StringVar(value="light")
+
     self.v_search = StringVar(value="")
     self.v_match = StringVar(value="")
     self.v_status = StringVar(value="Starting…")
@@ -157,6 +159,8 @@ class App:
     threading.Thread(target=self._watch_loop, daemon=True).start()
 
   def _build_ui(self, root: Tk) -> None:
+    import tkinter as tk
+
     pad = {"padx": 8, "pady": 6}
 
     frm = ttk.Frame(root)
@@ -171,6 +175,13 @@ class App:
     header.columnconfigure(0, weight=1)
     ttk.Label(header, text="Discogs Auto-Sort", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, sticky="w")
     ttk.Label(header, text="LPs only • Watches your collection and rebuilds automatically", foreground="#555").grid(row=1, column=0, sticky="w")
+
+    theme_btn = ttk.Menubutton(header, text="Theme")
+    theme_btn.grid(row=0, column=1, sticky="e")
+    theme_menu = tk.Menu(theme_btn, tearoff=0)
+    theme_menu.add_radiobutton(label="Light", value="light", variable=self.v_theme, command=self._apply_theme)
+    theme_menu.add_radiobutton(label="Dark", value="dark", variable=self.v_theme, command=self._apply_theme)
+    theme_btn["menu"] = theme_menu
     row += 1
 
     settings = ttk.LabelFrame(frm, text="Settings")
@@ -231,8 +242,6 @@ class App:
     nb.grid(row=row, column=0, columnspan=2, sticky="nsew", **pad)
     frm.rowconfigure(row, weight=1)
 
-    import tkinter as tk
-
     order_fr = ttk.Frame(nb)
     nb.add(order_fr, text="Shelf Order")
     order_fr.rowconfigure(0, weight=1)
@@ -275,6 +284,78 @@ class App:
     # Status bar
     status = ttk.Label(frm, textvariable=self.v_status, anchor="w")
     status.grid(row=row + 1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+
+    # Apply initial theme after widgets exist
+    self._apply_theme()
+
+  def _apply_theme(self) -> None:
+    mode = (self.v_theme.get() or "light").strip().lower()
+    dark = mode == "dark"
+
+    # Switch ttk theme when ttkbootstrap is installed.
+    if ttkb is not None:
+      try:
+        # ttkbootstrap attaches a style object to the Window.
+        if hasattr(self.root, "style") and getattr(self.root, "style") is not None:
+          self.root.style.theme_use("darkly" if dark else "flatly")  # type: ignore[attr-defined]
+        else:
+          ttk.Style().theme_use("darkly" if dark else "flatly")
+      except Exception:
+        pass
+    else:
+      # Best-effort styling for stdlib ttk. Works best with the 'clam' theme.
+      try:
+        if "clam" in ttk.Style().theme_names():
+          ttk.Style().theme_use("clam")
+      except Exception:
+        pass
+
+      bg = "#1e1e1e" if dark else "#f5f5f5"
+      fg = "#e6e6e6" if dark else "#000000"
+      field_bg = "#2a2a2a" if dark else "#ffffff"
+      field_fg = fg
+
+      s = ttk.Style()
+      try:
+        s.configure("TFrame", background=bg)
+        s.configure("TLabel", background=bg, foreground=fg)
+        s.configure("TButton", background=bg, foreground=fg)
+        s.configure("TCheckbutton", background=bg, foreground=fg)
+        s.configure("TRadiobutton", background=bg, foreground=fg)
+        s.configure("TMenubutton", background=bg, foreground=fg)
+        s.configure("TLabelframe", background=bg, foreground=fg)
+        s.configure("TLabelframe.Label", background=bg, foreground=fg)
+        s.configure("TEntry", fieldbackground=field_bg, foreground=field_fg)
+        s.configure("TSpinbox", fieldbackground=field_bg, foreground=field_fg)
+        s.configure("TCombobox", fieldbackground=field_bg, foreground=field_fg)
+        s.configure("TNotebook", background=bg)
+        s.configure("TNotebook.Tab", background=bg, foreground=fg)
+      except Exception:
+        pass
+
+    # Tk Text widgets: explicitly set colors (ttk themes don't style tk.Text).
+    if dark:
+      text_bg = "#111111"
+      text_fg = "#e6e6e6"
+      insert = "#e6e6e6"
+      match_bg = "#264f78"
+    else:
+      text_bg = "#ffffff"
+      text_fg = "#000000"
+      insert = "#000000"
+      match_bg = "#fff3b0"
+    try:
+      self.order_text.configure(background=text_bg, foreground=text_fg, insertbackground=insert)
+      self.log.configure(background=text_bg, foreground=text_fg, insertbackground=insert)
+      self.order_text.tag_configure("search_match", background=match_bg)
+    except Exception:
+      pass
+
+    # Best-effort for the toplevel background.
+    try:
+      self.root.configure(background=("#1e1e1e" if dark else "#f5f5f5"))
+    except Exception:
+      pass
 
   def _choose_dir(self) -> None:
     directory = filedialog.askdirectory(initialdir=self.v_output_dir.get() or str(Path.cwd()))
