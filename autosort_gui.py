@@ -105,8 +105,41 @@ class App:
   def __init__(self, root: Tk) -> None:
     self.root = root
     root.title("Discogs Auto-Sort")
+    try:
+      root.minsize(900, 620)
+    except Exception:
+      pass
+
+    self.style = ttk.Style()
+    try:
+      # 'clam' tends to look a bit more modern/cross-platform than the default.
+      if "clam" in self.style.theme_names():
+        self.style.theme_use("clam")
+    except Exception:
+      pass
+
+    # Palette (best-effort; note: macOS may still use native button chrome)
+    self._colors = {
+      "bg": "#0f172a",        # slate-900
+      "panel": "#111827",     # gray-900
+      "panel2": "#0b1220",    # darker
+      "text": "#e5e7eb",      # gray-200
+      "muted": "#94a3b8",     # slate-400
+      "accent": "#6366f1",    # indigo-500
+      "accent2": "#22c55e",   # green-500
+      "warn": "#f59e0b",      # amber-500
+    }
+
+    try:
+      self.style.configure("App.TFrame", background=self._colors["panel2"])
+      self.style.configure("Card.TLabelframe", background=self._colors["panel"])  # may not affect on mac
+      self.style.configure("Card.TLabelframe.Label", foreground=self._colors["text"], background=self._colors["panel"])  # label bg may not apply
+      self.style.configure("TLabel", foreground="#111")
+    except Exception:
+      pass
 
     self.v_token = StringVar(value="")
+    self.v_show_token = BooleanVar(value=False)
     self.v_user_agent = StringVar(value="VinylSorter/1.0 (+contact)")
     self.v_output_dir = StringVar(value=str(Path.cwd()))
     self.v_per_page = IntVar(value=100)
@@ -115,6 +148,7 @@ class App:
 
     self.v_search = StringVar(value="")
     self.v_match = StringVar(value="")
+    self.v_status = StringVar(value="Starting…")
 
     # Holds the most recent build for export/printing
     self._last_result: BuildResult | None = None
@@ -135,36 +169,73 @@ class App:
     threading.Thread(target=self._watch_loop, daemon=True).start()
 
   def _build_ui(self, root: Tk) -> None:
-    pad = {"padx": 6, "pady": 4}
+    pad = {"padx": 10, "pady": 8}
 
-    frm = ttk.Frame(root)
+    # Main container
+    frm = ttk.Frame(root, style="App.TFrame")
     frm.grid(row=0, column=0, sticky="nsew")
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
     frm.columnconfigure(1, weight=1)
 
     row = 0
-    ttk.Label(frm, text="Token (optional)").grid(row=row, column=0, sticky="w", **pad)
-    ttk.Entry(frm, textvariable=self.v_token, width=44).grid(row=row, column=1, sticky="ew", **pad)
+    # Colored header bar (use tk widgets for reliable bg/fg)
+    import tkinter as tk
+    header = tk.Frame(frm, bg=self._colors["bg"], bd=0, highlightthickness=0)
+    header.grid(row=row, column=0, columnspan=2, sticky="ew", padx=0, pady=(0, 10))
+    header.columnconfigure(0, weight=1)
+    tk.Label(
+      header,
+      text="Discogs Auto-Sort",
+      bg=self._colors["bg"],
+      fg=self._colors["text"],
+      font=("TkDefaultFont", 18, "bold"),
+      padx=14,
+      pady=10,
+    ).grid(row=0, column=0, sticky="w")
+    tk.Label(
+      header,
+      text="LPs only • Live sort view • Export/Print on demand",
+      bg=self._colors["bg"],
+      fg=self._colors["muted"],
+      font=("TkDefaultFont", 12),
+      padx=14,
+      pady=0,
+    ).grid(row=1, column=0, sticky="w")
     row += 1
 
-    ttk.Label(frm, text="User-Agent").grid(row=row, column=0, sticky="w", **pad)
-    ttk.Entry(frm, textvariable=self.v_user_agent, width=44).grid(row=row, column=1, sticky="ew", **pad)
-    row += 1
+    # Settings card
+    settings = ttk.LabelFrame(frm, text="Settings", style="Card.TLabelframe")
+    settings.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
+    settings.columnconfigure(1, weight=1)
+    srow = 0
 
-    out_row = ttk.Frame(frm)
-    out_row.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
+    ttk.Label(settings, text="Token").grid(row=srow, column=0, sticky="w", **pad)
+    self.token_entry = ttk.Entry(settings, textvariable=self.v_token, width=44, show="•")
+    self.token_entry.grid(row=srow, column=1, sticky="ew", **pad)
+    ttk.Checkbutton(settings, text="Show", variable=self.v_show_token, command=self._toggle_token_visibility).grid(row=srow, column=2, sticky="w", **pad)
+    srow += 1
+
+    ttk.Label(settings, text="User-Agent").grid(row=srow, column=0, sticky="w", **pad)
+    ttk.Entry(settings, textvariable=self.v_user_agent, width=44).grid(row=srow, column=1, sticky="ew", **pad)
+    srow += 1
+
+    out_row = ttk.Frame(settings)
+    out_row.grid(row=srow, column=0, columnspan=3, sticky="ew", **pad)
     out_row.columnconfigure(1, weight=1)
     ttk.Label(out_row, text="Output Dir").grid(row=0, column=0, sticky="w")
     ttk.Entry(out_row, textvariable=self.v_output_dir).grid(row=0, column=1, sticky="ew", padx=4)
     ttk.Button(out_row, text="Browse", command=self._choose_dir).grid(row=0, column=2, sticky="e")
-    row += 1
+    ttk.Button(out_row, text="Open", command=self._open_output_dir).grid(row=0, column=3, sticky="e", padx=(6, 0))
+    srow += 1
 
-    opt = ttk.Frame(frm)
-    opt.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
+    opt = ttk.Frame(settings)
+    opt.grid(row=srow, column=0, columnspan=3, sticky="ew", **pad)
     ttk.Label(opt, text="Poll seconds").grid(row=0, column=0, sticky="w")
     ttk.Spinbox(opt, from_=15, to=3600, textvariable=self.v_poll, width=8).grid(row=0, column=1, padx=6)
     ttk.Checkbutton(opt, text="Also JSON", variable=self.v_json).grid(row=0, column=2, padx=6, sticky="w")
+    srow += 1
+
     row += 1
 
     search_row = ttk.Frame(frm)
@@ -178,39 +249,96 @@ class App:
     self.v_search.trace_add("write", lambda *_: self._on_search_change())
     row += 1
 
+    # Action buttons row (more symmetrical)
     btn = ttk.Frame(frm)
-    btn.grid(row=row, column=0, columnspan=2, sticky="w", **pad)
-    ttk.Button(btn, text="Refresh Now", command=self._refresh_now).grid(row=0, column=0, padx=4)
-    ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, padx=4)
-    ttk.Button(btn, text="Print…", command=self._print_current).grid(row=0, column=2, padx=4)
-    ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, padx=4)
+    btn.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
+    btn.columnconfigure(0, weight=1)
+    btn.columnconfigure(1, weight=1)
+    btn.columnconfigure(2, weight=1)
+    btn.columnconfigure(3, weight=1)
+    ttk.Button(btn, text="Refresh", command=self._refresh_now).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+    ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    ttk.Button(btn, text="Print", command=self._print_current).grid(row=0, column=2, sticky="ew", padx=(0, 8))
+    ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, sticky="ew")
     row += 1
 
     nb = ttk.Notebook(frm)
     nb.grid(row=row, column=0, columnspan=2, sticky="nsew", **pad)
     frm.rowconfigure(row, weight=1)
 
-    import tkinter as tk
-
     order_fr = ttk.Frame(nb)
     nb.add(order_fr, text="Shelf Order")
     order_fr.rowconfigure(0, weight=1)
     order_fr.columnconfigure(0, weight=1)
-    self.order_text = tk.Text(order_fr, height=18, width=90)
+
+    order_wrap = ttk.Frame(order_fr)
+    order_wrap.grid(row=0, column=0, sticky="nsew")
+    order_wrap.rowconfigure(0, weight=1)
+    order_wrap.columnconfigure(0, weight=1)
+
+    order_scroll = ttk.Scrollbar(order_wrap, orient="vertical")
+    order_scroll.grid(row=0, column=1, sticky="ns")
+
+    self.order_text = tk.Text(
+      order_wrap,
+      height=18,
+      width=90,
+      wrap="none",
+      yscrollcommand=order_scroll.set,
+      font=("Menlo", 12),
+      background="#ffffff",
+      foreground="#0f172a",
+    )
     self.order_text.grid(row=0, column=0, sticky="nsew")
+    order_scroll.config(command=self.order_text.yview)
     self.order_text.tag_configure("search_match", background="#fff3b0")
 
     log_fr = ttk.Frame(nb)
     nb.add(log_fr, text="Log")
     log_fr.rowconfigure(0, weight=1)
     log_fr.columnconfigure(0, weight=1)
-    self.log = tk.Text(log_fr, height=18, width=90)
+    log_wrap = ttk.Frame(log_fr)
+    log_wrap.grid(row=0, column=0, sticky="nsew")
+    log_wrap.rowconfigure(0, weight=1)
+    log_wrap.columnconfigure(0, weight=1)
+    log_scroll = ttk.Scrollbar(log_wrap, orient="vertical")
+    log_scroll.grid(row=0, column=1, sticky="ns")
+    self.log = tk.Text(
+      log_wrap,
+      height=18,
+      width=90,
+      yscrollcommand=log_scroll.set,
+      font=("Menlo", 12),
+      background="#0b1220",
+      foreground="#e5e7eb",
+      insertbackground="#e5e7eb",
+    )
     self.log.grid(row=0, column=0, sticky="nsew")
+    log_scroll.config(command=self.log.yview)
+
+    # Status bar
+    status = tk.Frame(frm, bg=self._colors["bg"], bd=0, highlightthickness=0)
+    status.grid(row=row + 1, column=0, columnspan=2, sticky="ew", padx=0, pady=(10, 0))
+    status.columnconfigure(0, weight=1)
+    tk.Label(status, textvariable=self.v_status, bg=self._colors["bg"], fg=self._colors["text"], anchor="w", padx=14, pady=10).grid(row=0, column=0, sticky="ew")
 
   def _choose_dir(self) -> None:
     directory = filedialog.askdirectory(initialdir=self.v_output_dir.get() or str(Path.cwd()))
     if directory:
       self.v_output_dir.set(directory)
+
+  def _open_output_dir(self) -> None:
+    path = self.v_output_dir.get().strip() or str(Path.cwd())
+    try:
+      subprocess.run(["open", path], check=False)
+    except Exception:
+      pass
+
+  def _toggle_token_visibility(self) -> None:
+    try:
+      self.token_entry.configure(show="" if self.v_show_token.get() else "•")
+    except Exception:
+      pass
 
   def _log(self, msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
@@ -296,6 +424,7 @@ class App:
   def _refresh_now(self) -> None:
     # Wake the watcher and force immediate check
     self._log("Manual refresh requested.")
+    self.v_status.set("Refresh requested…")
     self._wake.set()
 
   def _stop_app(self) -> None:
@@ -326,6 +455,7 @@ class App:
       self._log(f"Exported: {json_path.name}")
 
     messagebox.showinfo("Export", f"Wrote files to:\n{out_dir}")
+    self.v_status.set(f"Exported to: {out_dir}")
 
   def _print_current(self) -> None:
     result = self._last_result
@@ -346,12 +476,15 @@ class App:
         tmp_path = f.name
       subprocess.run(["lpr", tmp_path], check=True)
       self._log("Sent to printer via lpr.")
+      self.v_status.set("Sent to printer.")
     except Exception as e:
       messagebox.showerror("Print", f"Printing failed: {e}")
+      self.v_status.set("Print failed.")
 
   def _watch_loop(self) -> None:
     """Background thread: poll collection count; rebuild on change or manual refresh."""
     self._log("Watcher started.")
+    self.v_status.set("Watching for changes…")
     while not self._stop.is_set():
       cfg = self._get_cfg()
       try:
@@ -368,23 +501,30 @@ class App:
           self._log(f"Initial collection count: {count}")
           # Build once on startup
           self._log("Building shelf order…")
+          self.v_status.set("Building…")
           result = build_once(cfg, self._log)
           self.result_q.put(result)
           self._last_built_at = time.time()
           self._log(f"Build complete. Items: {len(result.rows_sorted)}")
+          self.v_status.set(f"Built {len(result.rows_sorted)} items. Polling every {cfg.poll_seconds}s")
         else:
           if count != self._last_count:
             self._log(f"Collection changed: {self._last_count} → {count}")
             self._last_count = count
             self._log("Rebuilding shelf order…")
+            self.v_status.set("Rebuilding…")
             result = build_once(cfg, self._log)
             self.result_q.put(result)
             self._last_built_at = time.time()
             self._log(f"Build complete. Items: {len(result.rows_sorted)}")
+            self.v_status.set(f"Built {len(result.rows_sorted)} items. Polling every {cfg.poll_seconds}s")
+          else:
+            self.v_status.set(f"No changes. Polling every {cfg.poll_seconds}s")
 
       except Exception as e:
         self._log(f"Error: {e}")
         self._log(traceback.format_exc())
+        self.v_status.set("Error (see Log tab).")
 
       # Wait for next poll or manual refresh
       self._wake.clear()
