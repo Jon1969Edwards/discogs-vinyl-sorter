@@ -43,6 +43,14 @@ except ModuleNotFoundError:  # pragma: no cover
   requests = None  # type: ignore
 
 
+_HTTP_SESSION = None
+if requests is not None:  # pragma: no cover
+  try:
+    _HTTP_SESSION = requests.Session()
+  except Exception:
+    _HTTP_SESSION = None
+
+
 API_BASE = "https://api.discogs.com"
 VERSION = "0.2.0"
 
@@ -250,7 +258,10 @@ def api_get(url: str, headers: Dict[str, str], params: Optional[Dict[str, str]] 
   last_error: Optional[Exception] = None
   for attempt in range(retries):
     try:
-      resp = requests.get(url, headers=headers, params=params, timeout=30)
+      if _HTTP_SESSION is not None:
+        resp = _HTTP_SESSION.get(url, headers=headers, params=params, timeout=30)
+      else:
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
       status = resp.status_code
       if status < 400:
         _polite_rate_limit_pause(resp)
@@ -275,6 +286,91 @@ def api_get(url: str, headers: Dict[str, str], params: Optional[Dict[str, str]] 
 def get_identity(headers: Dict[str, str]) -> Dict:
   url = f"{API_BASE}/oauth/identity"
   return api_get(url, headers).json()
+
+
+def get_release(headers: Dict[str, str], release_id: int, curr_abbr: str = "SEK") -> Dict:
+  """Fetch full release data for a release id (includes lowest_price in many cases)."""
+  url = f"{API_BASE}/releases/{int(release_id)}"
+  params = {"curr_abbr": curr_abbr} if curr_abbr else None
+  return api_get(url, headers, params=params).json()
+
+
+def get_release_lowest_price(headers: Dict[str, str], release_id: int, curr_abbr: str = "SEK") -> Optional[float]:
+  """Return lowest_price from the /releases/{id} endpoint, if available."""
+  try:
+    data = get_release(headers, release_id=release_id, curr_abbr=curr_abbr)
+    return _extract_price_value(data.get("lowest_price") if isinstance(data, dict) else None)
+  except Exception:
+    return None
+
+
+def get_marketplace_stats(headers: Dict[str, str], release_id: int, curr_abbr: str = "SEK") -> Dict:
+  """Fetch Discogs marketplace stats for a release.
+
+  Uses /marketplace/stats/{release_id}. This may be rate-limited; we reuse api_get's
+  retry/backoff behavior.
+  """
+  url = f"{API_BASE}/marketplace/stats/{int(release_id)}"
+  params = {"curr_abbr": curr_abbr} if curr_abbr else None
+  return api_get(url, headers, params=params).json()
+
+
+def _extract_price_value(price_obj: object) -> Optional[float]:
+  """Extract a numeric price from Discogs API shapes.
+
+  Discogs endpoints may return prices as:
+  - number: 12.34
+  - string: "12.34"
+  - object: {"value": 12.34, "currency": "USD"}
+  """
+  if price_obj is None:
+    return None
+  if isinstance(price_obj, (int, float)):
+    return float(price_obj)
+  if isinstance(price_obj, str):
+    try:
+      return float(price_obj.strip())
+    except Exception:
+      return None
+  if isinstance(price_obj, dict):
+    # Common Discogs shape: { value: "10.00", currency: "USD" }
+    for key in ("value", "amount", "price"):
+      if key in price_obj:
+        return _extract_price_value(price_obj.get(key))
+  return None
+
+
+def get_common_price(headers: Dict[str, str], release_id: int, curr_abbr: str = "SEK") -> Optional[float]:
+  """Return a "common" price for a release (median price), if available.
+
+  Discogs marketplace stats may include: lowest_price, median_price, highest_price.
+  We treat median_price as the best proxy for a typical/common price. If Discogs
+  doesn't return median_price for a given release (common when there are few/no
+  marketplace listings), we fall back to lowest_price as a pragmatic alternative.
+  """
+  try:
+    stats = get_marketplace_stats(headers, release_id=release_id, curr_abbr=curr_abbr)
+    # Discogs responses have varied over time; be defensive.
+    mp = stats.get("median_price")
+    mp_val = _extract_price_value(mp)
+    if mp_val is not None:
+      return mp_val
+
+    nested = stats.get("statistics") if isinstance(stats, dict) else None
+    if isinstance(nested, dict):
+      mp_val = _extract_price_value(nested.get("median_price"))
+      if mp_val is not None:
+        return mp_val
+
+    # Fallback: lowest price
+    lp_val = _extract_price_value(stats.get("lowest_price") if isinstance(stats, dict) else None)
+    if lp_val is not None:
+      return lp_val
+    if isinstance(nested, dict):
+      return _extract_price_value(nested.get("lowest_price"))
+    return None
+  except Exception:
+    return None
 
 
 def iterate_collection(headers: Dict[str, str], username: str, per_page: int = 100, max_pages: Optional[int] = None) -> Iterable[Dict]:

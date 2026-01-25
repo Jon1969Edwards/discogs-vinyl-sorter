@@ -23,6 +23,8 @@ personal collections.
 
 from __future__ import annotations
 
+import csv
+import concurrent.futures
 import queue
 import subprocess
 import tempfile
@@ -32,6 +34,8 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import Tk, StringVar, BooleanVar, IntVar, ttk, filedialog, messagebox
+import tkinter as tk
+import tkinter.font as tkfont
 
 import discogs_app as core
 
@@ -43,6 +47,123 @@ except Exception:
 
 
 POLL_SECONDS_DEFAULT = 300  # 5 minutes
+PRICE_FETCH_LIMIT_DEFAULT = 250
+PRICE_FETCH_WORKERS_DEFAULT = 6
+
+
+class RoundedButton(tk.Canvas):
+  def __init__(
+    self,
+    parent: tk.Misc,
+    text: str,
+    command: callable,
+    fill: str,
+    text_fill: str,
+    hover_fill: str | None = None,
+    radius: int = 12,
+    padding_x: int = 14,
+    padding_y: int = 8,
+    font: tuple[str, int] = ("TkDefaultFont", 12),
+  ) -> None:
+    self._text = text
+    self._command = command
+    self._fill = fill
+    self._text_fill = text_fill
+    self._hover_fill = hover_fill or fill
+    self._radius = max(6, int(radius))
+    self._padding_x = max(8, int(padding_x))
+    self._padding_y = max(6, int(padding_y))
+    self._font = font
+    self._pressed = False
+
+    fnt = tkfont.Font(font=font)
+    text_w = int(fnt.measure(text))
+    text_h = int(fnt.metrics("linespace"))
+    w = max(110, text_w + (2 * self._padding_x))
+    h = max(34, text_h + (2 * self._padding_y))
+    super().__init__(parent, width=w, height=h, highlightthickness=0, bd=0)
+    # IMPORTANT: tkinter.Widget uses `_w` internally for the widget path name.
+    # Do not overwrite it.
+    self._width = w
+    self._height = h
+
+    # Match parent background so the rounded shape looks natural.
+    try:
+      self.configure(bg=str(parent.cget("background")))
+    except Exception:
+      pass
+
+    self._shape_ids: list[int] = []
+    self._text_id: int | None = None
+    self._draw(self._fill, self._text_fill)
+
+    self.configure(cursor="hand2")
+    self.bind("<Enter>", self._on_enter)
+    self.bind("<Leave>", self._on_leave)
+    self.bind("<ButtonPress-1>", self._on_press)
+    self.bind("<ButtonRelease-1>", self._on_release)
+
+  def set_colors(self, fill: str, text_fill: str, hover_fill: str | None = None) -> None:
+    self._fill = fill
+    self._text_fill = text_fill
+    self._hover_fill = hover_fill or fill
+    self._draw(self._fill, self._text_fill)
+
+  def set_canvas_bg(self, bg: str) -> None:
+    try:
+      self.configure(bg=bg)
+    except Exception:
+      pass
+
+  def _rounded_rect(self, x0: int, y0: int, x1: int, y1: int, r: int, fill: str) -> None:
+    self._shape_ids.append(self.create_rectangle(x0 + r, y0, x1 - r, y1, fill=fill, outline=fill))
+    self._shape_ids.append(self.create_rectangle(x0, y0 + r, x1, y1 - r, fill=fill, outline=fill))
+    self._shape_ids.append(self.create_arc(x0, y0, x0 + 2 * r, y0 + 2 * r, start=90, extent=90, fill=fill, outline=fill))
+    self._shape_ids.append(self.create_arc(x1 - 2 * r, y0, x1, y0 + 2 * r, start=0, extent=90, fill=fill, outline=fill))
+    self._shape_ids.append(self.create_arc(x0, y1 - 2 * r, x0 + 2 * r, y1, start=180, extent=90, fill=fill, outline=fill))
+    self._shape_ids.append(self.create_arc(x1 - 2 * r, y1 - 2 * r, x1, y1, start=270, extent=90, fill=fill, outline=fill))
+
+  def _draw(self, fill: str, text_fill: str) -> None:
+    for i in getattr(self, "_shape_ids", []):
+      try:
+        self.delete(i)
+      except Exception:
+        pass
+    self._shape_ids = []
+    if self._text_id is not None:
+      try:
+        self.delete(self._text_id)
+      except Exception:
+        pass
+      self._text_id = None
+    self._rounded_rect(0, 0, self._width, self._height, self._radius, fill)
+    self._text_id = self.create_text(
+      self._width // 2,
+      self._height // 2,
+      text=self._text,
+      fill=text_fill,
+      font=self._font,
+    )
+
+  def _on_enter(self, _evt=None) -> None:
+    if not self._pressed:
+      self._draw(self._hover_fill, self._text_fill)
+
+  def _on_leave(self, _evt=None) -> None:
+    self._pressed = False
+    self._draw(self._fill, self._text_fill)
+
+  def _on_press(self, _evt=None) -> None:
+    self._pressed = True
+
+  def _on_release(self, _evt=None) -> None:
+    if not self._pressed:
+      return
+    self._pressed = False
+    try:
+      self._command()
+    finally:
+      self._draw(self._hover_fill, self._text_fill)
 
 
 @dataclass
@@ -133,8 +254,10 @@ class App:
     self.v_per_page = IntVar(value=100)
     self.v_json = BooleanVar(value=False)
     self.v_poll = IntVar(value=POLL_SECONDS_DEFAULT)
+    self.v_show_prices = BooleanVar(value=False)
 
     self.v_theme = StringVar(value="light")
+    self.v_price_sort = StringVar(value="shelf")
 
     self.v_search = StringVar(value="")
     self.v_match = StringVar(value="")
@@ -142,6 +265,10 @@ class App:
 
     # Holds the most recent build for export/printing
     self._last_result: BuildResult | None = None
+    self._price_cache: dict[int, float | None] = {}
+    self._price_lock = threading.Lock()
+    self._prices_inflight = False
+    self._prices_enabled = False
     self.result_q: queue.Queue[BuildResult] = queue.Queue()
 
     self._stop = threading.Event()
@@ -159,8 +286,6 @@ class App:
     threading.Thread(target=self._watch_loop, daemon=True).start()
 
   def _build_ui(self, root: Tk) -> None:
-    import tkinter as tk
-
     pad = {"padx": 8, "pady": 6}
 
     frm = ttk.Frame(root)
@@ -209,6 +334,7 @@ class App:
     ttk.Label(opt, text="Poll seconds").grid(row=0, column=0, sticky="w")
     ttk.Spinbox(opt, from_=15, to=3600, textvariable=self.v_poll, width=8).grid(row=0, column=1, padx=6)
     ttk.Checkbutton(opt, text="Also JSON", variable=self.v_json).grid(row=0, column=2, padx=6, sticky="w")
+    ttk.Checkbutton(opt, text="Prices (SEK)", variable=self.v_show_prices, command=self._on_prices_toggle).grid(row=0, column=3, padx=6, sticky="w")
     srow += 1
 
     row += 1
@@ -226,16 +352,13 @@ class App:
 
     btn = ttk.Frame(frm)
     btn.grid(row=row, column=0, columnspan=2, sticky="w", **pad)
-    if self._has_bootstrap:
-      ttk.Button(btn, text="Refresh Now", command=self._refresh_now, style="primary.TButton").grid(row=0, column=0, padx=(0, 6))
-      ttk.Button(btn, text="Export TXT/CSV", command=self._export_files, style="secondary.TButton").grid(row=0, column=1, padx=(0, 6))
-      ttk.Button(btn, text="Print…", command=self._print_current, style="success.TButton").grid(row=0, column=2, padx=(0, 6))
-      ttk.Button(btn, text="Stop", command=self._stop_app, style="danger.TButton").grid(row=0, column=3, padx=(0, 6))
-    else:
-      ttk.Button(btn, text="Refresh Now", command=self._refresh_now).grid(row=0, column=0, padx=(0, 6))
-      ttk.Button(btn, text="Export TXT/CSV", command=self._export_files).grid(row=0, column=1, padx=(0, 6))
-      ttk.Button(btn, text="Print…", command=self._print_current).grid(row=0, column=2, padx=(0, 6))
-      ttk.Button(btn, text="Stop", command=self._stop_app).grid(row=0, column=3, padx=(0, 6))
+
+    self.btn_refresh = RoundedButton(btn, "Refresh", self._refresh_now, fill="#2563eb", text_fill="#ffffff", hover_fill="#1d4ed8")
+    self.btn_export = RoundedButton(btn, "Export", self._export_files, fill="#6b7280", text_fill="#ffffff", hover_fill="#4b5563")
+    self.btn_print = RoundedButton(btn, "Print", self._print_current, fill="#16a34a", text_fill="#ffffff", hover_fill="#15803d")
+    self.btn_stop = RoundedButton(btn, "Stop", self._stop_app, fill="#dc2626", text_fill="#ffffff", hover_fill="#b91c1c")
+    for i, b in enumerate([self.btn_refresh, self.btn_export, self.btn_print, self.btn_stop]):
+      b.grid(row=0, column=i, padx=(0, 10))
     row += 1
 
     nb = ttk.Notebook(frm)
@@ -266,6 +389,44 @@ class App:
     self.order_text.grid(row=0, column=0, sticky="nsew")
     order_scroll.config(command=self.order_text.yview)
     self.order_text.tag_configure("search_match", background="#fff3b0")
+
+    prices_fr = ttk.Frame(nb)
+    nb.add(prices_fr, text="Prices")
+    prices_fr.rowconfigure(1, weight=1)
+    prices_fr.columnconfigure(0, weight=1)
+
+    prices_bar = ttk.Frame(prices_fr)
+    prices_bar.grid(row=0, column=0, sticky="ew", padx=2, pady=(2, 6))
+    prices_bar.columnconfigure(1, weight=1)
+    ttk.Label(prices_bar, text="Sort").grid(row=0, column=0, sticky="w", padx=(2, 6))
+    price_sort = ttk.Combobox(
+      prices_bar,
+      textvariable=self.v_price_sort,
+      values=["shelf", "price_desc", "price_asc"],
+      width=12,
+      state="readonly",
+    )
+    price_sort.grid(row=0, column=1, sticky="w")
+    ttk.Label(prices_bar, text="(price sorts only this tab)", foreground="#777").grid(row=0, column=2, sticky="e", padx=(10, 2))
+    price_sort.bind("<<ComboboxSelected>>", lambda *_: self._render_prices(self._last_result or BuildResult(username="", rows_sorted=[], lines=[])))
+
+    prices_wrap = ttk.Frame(prices_fr)
+    prices_wrap.grid(row=1, column=0, sticky="nsew")
+    prices_wrap.rowconfigure(0, weight=1)
+    prices_wrap.columnconfigure(0, weight=1)
+
+    prices_scroll = ttk.Scrollbar(prices_wrap, orient="vertical")
+    prices_scroll.grid(row=0, column=1, sticky="ns")
+    self.prices_text = tk.Text(
+      prices_wrap,
+      height=18,
+      width=90,
+      wrap="none",
+      yscrollcommand=prices_scroll.set,
+      font=("Menlo", 12),
+    )
+    self.prices_text.grid(row=0, column=0, sticky="nsew")
+    prices_scroll.config(command=self.prices_text.yview)
 
     log_fr = ttk.Frame(nb)
     nb.add(log_fr, text="Log")
@@ -347,6 +508,7 @@ class App:
     try:
       self.order_text.configure(background=text_bg, foreground=text_fg, insertbackground=insert)
       self.log.configure(background=text_bg, foreground=text_fg, insertbackground=insert)
+      self.prices_text.configure(background=text_bg, foreground=text_fg, insertbackground=insert)
       self.order_text.tag_configure("search_match", background=match_bg)
     except Exception:
       pass
@@ -354,6 +516,24 @@ class App:
     # Best-effort for the toplevel background.
     try:
       self.root.configure(background=("#1e1e1e" if dark else "#f5f5f5"))
+    except Exception:
+      pass
+
+    # Rounded button palette + canvas background
+    try:
+      canvas_bg = "#1e1e1e" if dark else "#f5f5f5"
+      for b in [self.btn_refresh, self.btn_export, self.btn_print, self.btn_stop]:
+        b.set_canvas_bg(canvas_bg)
+      if dark:
+        self.btn_refresh.set_colors("#3b82f6", "#ffffff", "#2563eb")
+        self.btn_export.set_colors("#6b7280", "#ffffff", "#4b5563")
+        self.btn_print.set_colors("#22c55e", "#ffffff", "#16a34a")
+        self.btn_stop.set_colors("#ef4444", "#ffffff", "#dc2626")
+      else:
+        self.btn_refresh.set_colors("#2563eb", "#ffffff", "#1d4ed8")
+        self.btn_export.set_colors("#6b7280", "#ffffff", "#4b5563")
+        self.btn_print.set_colors("#16a34a", "#ffffff", "#15803d")
+        self.btn_stop.set_colors("#dc2626", "#ffffff", "#b91c1c")
     except Exception:
       pass
 
@@ -403,12 +583,159 @@ class App:
     if not result.lines:
       self.order_text.insert("end", "(No matching LPs found.)\n")
       self.v_match.set("")
+      self._render_prices(result)
       return
 
     # Always show the full list; search only highlights matches.
     self.order_text.insert("end", "\n".join(result.lines) + "\n")
     self.order_text.see("1.0")
     self._highlight_search()
+    self._render_prices(result)
+
+  def _on_prices_toggle(self) -> None:
+    if self.v_show_prices.get():
+      if not messagebox.askyesno(
+        "Prices",
+        "This will fetch Discogs price data in SEK and may take a while for large collections. Continue?",
+      ):
+        self.v_show_prices.set(False)
+        self._prices_enabled = False
+        return
+      self._prices_enabled = True
+    if self._last_result is not None:
+      self._render_order(self._last_result)
+    if not self.v_show_prices.get():
+      self._prices_enabled = False
+
+  def _maybe_fetch_prices_async(self) -> None:
+    if self._prices_inflight:
+      return
+    if not self._prices_enabled:
+      return
+    result = self._last_result
+    if not result or not result.rows_sorted:
+      return
+
+    # Snapshot Tk variables on the UI thread (Tkinter variables are not thread-safe).
+    token = (self.v_token.get() or "").strip()
+    user_agent = core.get_user_agent(None)
+    release_ids: list[int] = []
+    for r in result.rows_sorted:
+      rid = r.release_id
+      if isinstance(rid, int) and rid not in self._price_cache:
+        release_ids.append(rid)
+
+    if not release_ids:
+      return
+
+    self._prices_inflight = True
+    self._log(f"Starting price fetch thread (pending: {len(release_ids)})")
+    threading.Thread(target=self._fetch_prices_task, args=(token, user_agent, release_ids), daemon=True).start()
+
+  def _fetch_prices_task(self, token: str, user_agent: str, release_ids: list[int]) -> None:
+    try:
+      token_resolved = core.get_token(token or None)
+      headers = core.discogs_headers(token_resolved, user_agent)
+
+      with self._price_lock:
+        missing = [rid for rid in release_ids if rid not in self._price_cache]
+      if not missing:
+        return
+
+      if len(missing) > PRICE_FETCH_LIMIT_DEFAULT:
+        self._log(f"Common price fetch capped at {PRICE_FETCH_LIMIT_DEFAULT} (pending: {len(missing)})")
+        missing = missing[:PRICE_FETCH_LIMIT_DEFAULT]
+
+      workers = min(max(1, PRICE_FETCH_WORKERS_DEFAULT), 10)
+      self._log(f"Fetching prices (SEK) for {len(missing)} releases… (workers: {workers})")
+
+      fetched = 0
+
+      def fetch_one(rid: int) -> tuple[int, float | None]:
+        # Use /releases/{id} lowest_price: tends to be more consistently present.
+        return rid, core.get_release_lowest_price(headers, rid, curr_abbr="SEK")
+
+      with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(fetch_one, rid): rid for rid in missing}
+        for fut in concurrent.futures.as_completed(futures):
+          if not self._prices_enabled:
+            break
+          rid = futures.get(fut)
+          try:
+            rid2, price = fut.result()
+          except Exception:
+            # Cache failures as None so we don't spin forever.
+            rid2, price = int(rid) if rid is not None else -1, None
+          if rid2 >= 0:
+            with self._price_lock:
+              if rid2 not in self._price_cache:
+                self._price_cache[rid2] = price
+          fetched += 1
+          if fetched % 25 == 0:
+            self._log(f"Prices fetched: {fetched}/{len(missing)}")
+      self._log("Price fetch complete.")
+    except BaseException as e:
+      self._log(f"Price fetch failed: {e}")
+      self._log(traceback.format_exc())
+    finally:
+      self._prices_inflight = False
+      self._log("Price fetch thread finished.")
+      try:
+        if self._last_result is not None:
+          self.root.after(0, lambda: self._render_order(self._last_result))
+      except Exception:
+        pass
+
+  def _render_prices(self, result: BuildResult) -> None:
+    # Show prices in a separate tab to avoid cluttering the main shelf order.
+    try:
+      self.prices_text.delete("1.0", "end")
+    except Exception:
+      return
+
+    if not self.v_show_prices.get():
+      self.prices_text.insert("end", "(Enable Prices (SEK) to fetch and display prices here.)\n")
+      return
+
+    if not result.rows_sorted:
+      self.prices_text.insert("end", "(No items.)\n")
+      return
+
+    with self._price_lock:
+      cache_snapshot = dict(self._price_cache)
+    total = len(result.rows_sorted)
+    cached = sum(1 for r in result.rows_sorted if isinstance(r.release_id, int) and r.release_id in cache_snapshot)
+    priced = sum(1 for r in result.rows_sorted if isinstance(r.release_id, int) and isinstance(cache_snapshot.get(r.release_id), (int, float)))
+    self.prices_text.insert("end", f"Prices (SEK) — {priced} with price • {cached}/{total} fetched\n\n")
+
+    rows = list(result.rows_sorted)
+    mode = (self.v_price_sort.get() or "shelf").strip().lower()
+    if mode in {"price_desc", "price_asc"}:
+      def _p(row: core.ReleaseRow) -> float | None:
+        rid = row.release_id
+        if isinstance(rid, int) and rid in self._price_cache:
+          val = self._price_cache.get(rid)
+          return float(val) if isinstance(val, (int, float)) else None
+        return None
+
+      if mode == "price_asc":
+        rows.sort(key=lambda r: (_p(r) is None, _p(r) if _p(r) is not None else 0.0, r.sort_artist, r.sort_title))
+      else:
+        rows.sort(key=lambda r: (_p(r) is None, -(_p(r) if _p(r) is not None else 0.0), r.sort_artist, r.sort_title))
+
+    for r in rows:
+      rid = r.release_id
+      if not isinstance(rid, int):
+        price_txt = "—"
+      elif rid not in cache_snapshot:
+        price_txt = "…"
+      else:
+        p = cache_snapshot.get(rid)
+        price_txt = f"{p:.0f}" if isinstance(p, (int, float)) else "—"
+      self.prices_text.insert("end", f"{r.artist_display} — {r.title} ({r.year or ''})  ~{price_txt} SEK\n")
+
+    # Ensure background fetch is running.
+    self._maybe_fetch_prices_async()
 
   def _highlight_search(self) -> None:
     # Highlight matches within the displayed text without filtering out lines.
@@ -492,6 +819,63 @@ class App:
     messagebox.showinfo("Export", f"Wrote files to:\n{out_dir}")
     self.v_status.set(f"Exported to: {out_dir}")
 
+    # Optional: additional outputs that include common price (median) if enabled.
+    if self.v_show_prices.get() and result.rows_sorted:
+      try:
+        base_lines = core.generate_txt_lines(result.rows_sorted, dividers=False, align=False, show_country=False)
+        lines_with_prices: list[str] = []
+        for r, line in zip(result.rows_sorted, base_lines):
+          rid = r.release_id
+          if isinstance(rid, int) and rid in self._price_cache:
+            p = self._price_cache.get(rid)
+            if p is None:
+              lines_with_prices.append(f"{line} [~— SEK]")
+            else:
+              lines_with_prices.append(f"{line} [~{p:.0f} SEK]")
+          else:
+            lines_with_prices.append(f"{line} [~… SEK]")
+
+        txtp = out_dir / "vinyl_shelf_order_with_prices.txt"
+        with txtp.open("w", encoding="utf-8") as f:
+          f.write("\n".join(lines_with_prices) + "\n")
+        self._log(f"Exported: {txtp.name}")
+
+        csvp = out_dir / "vinyl_shelf_order_with_prices.csv"
+        with csvp.open("w", newline="", encoding="utf-8") as f:
+          writer = csv.writer(f)
+          writer.writerow([
+            "Artist",
+            "Title",
+            "Year",
+            "Label",
+            "CatNo",
+            "Country",
+            "Format",
+            "DiscogsURL",
+            "Notes",
+            "CommonPriceSEK",
+          ])
+          for r in result.rows_sorted:
+            rid = r.release_id
+            p = self._price_cache.get(rid) if isinstance(rid, int) else None
+            writer.writerow(
+              [
+                r.artist_display,
+                r.title,
+                r.year or "",
+                r.label,
+                r.catno,
+                r.country,
+                r.format_str,
+                r.discogs_url,
+                r.notes,
+                f"{p:.2f}" if isinstance(p, (int, float)) else "",
+              ]
+            )
+        self._log(f"Exported: {csvp.name}")
+      except Exception as e:
+        self._log(f"Price export failed: {e}")
+
   def _print_current(self) -> None:
     result = self._last_result
     if not result or not result.lines:
@@ -507,7 +891,11 @@ class App:
 
     try:
       with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
-        f.write("\n".join(result.lines) + "\n")
+        # Print what the user currently sees (includes common prices when enabled).
+        try:
+          f.write(self.order_text.get("1.0", "end").rstrip() + "\n")
+        except Exception:
+          f.write("\n".join(result.lines) + "\n")
         tmp_path = f.name
       subprocess.run(["lpr", tmp_path], check=True)
       self._log("Sent to printer via lpr.")
