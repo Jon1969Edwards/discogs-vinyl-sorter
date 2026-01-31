@@ -164,7 +164,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--last-name-first",
     action="store_true",
-    help="Sort artists by last word of their name when heuristic applies (does not change display).",
+    default=True,
+    help="Sort artists by last word of their name when heuristic applies (does not change display). Enabled by default.",
   )
   parser.add_argument(
     "--lnf-safe-bands",
