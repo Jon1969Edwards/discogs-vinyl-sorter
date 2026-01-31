@@ -922,7 +922,7 @@ class App:
             # Temporarily disable Refresh button if present
             if hasattr(self, 'btn_refresh'):
               self.btn_refresh.config(state='disabled')
-              self.after(5000, lambda: self.btn_refresh.config(state='normal'))
+              self.root.after(5000, lambda: self.btn_refresh.config(state='normal'))
             # Wait a bit longer before next poll
             time.sleep(5)
             continue
