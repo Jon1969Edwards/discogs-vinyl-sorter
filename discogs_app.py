@@ -1,3 +1,8 @@
+# LNF personal-artist override: treat these as personal, not band, for last-name-first flipping
+_LNF_FORCE_PERSONAL = {
+  "edie brickell & new bohemians",
+  "elvis costello & the attractions",
+}
 #!/usr/bin/env python3
 """
 Discogs 33⅓ LP Shelf Sorter
@@ -495,6 +500,16 @@ def _last_name_first_key(artist_clean: str, allow_3: bool, exclude_set: Set[str]
   norm = _normalize_exclude_name(artist_clean)
   if norm in exclude_set:
     return None
+  # General rule: If artist is 'Firstname Lastname & ...' or 'Firstname Lastname and ...', always flip to 'Lastname, Firstname'
+  tokens = [t for t in re.split(r"\s+", artist_clean) if t]
+  if len(tokens) > 2 and tokens[2].lower() in {"&", "and"}:
+    if tokens[0].lower() not in {"the", "and", "&"}:
+      return f"{tokens[1]}, {tokens[0]}".lower()
+  # Force-flip for known personal-artist exceptions (legacy, still works for exact matches)
+  if artist_clean.strip().lower() in _LNF_FORCE_PERSONAL:
+    tokens = [t for t in re.split(r"\s+", artist_clean) if t]
+    if tokens and tokens[0].lower() not in {"the", "and", "&"}:
+      return f"{tokens[1]}, {tokens[0]}".lower()
   tokens = [t for t in re.split(r"\s+", artist_clean) if t]
   if len(tokens) == 2:
     # Optional: avoid flipping obvious band-like two-word names
