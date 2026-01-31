@@ -82,6 +82,30 @@ def main():
     sorted_title = app.sort_rows([r1, r2], "title")
     assert_eq(sorted_title[0].title, "Alpha Tunes", "Various Artists should be filed/sorted by title when various-policy is 'title'")
 
+    # 11) Robust first-artist extraction: Ray Charles/ Harry Belafonte should sort as 'charles, ray'
+    ray_key = sort_key("Ray Charles/ Harry Belafonte", lnf=True)
+    assert_eq(ray_key, "charles, ray", "Should extract and flip only the first artist before '/' for sorting")
+
+    # 12) Full order: Ramones, Ray Charles/ Harry Belafonte, The Runaways
+    records = [
+        ("Ramones", "Ramones (2018) [Sire RR1 6020]"),
+        ("Ray Charles/ Harry Belafonte", "The Greatest Ever [Coronet Records CXS-203]"),
+        ("The Runaways", "Live In Japan (1977) [Mercury 6338 833]"),
+    ]
+    # Build sort keys and sort
+    rec_objs = [
+        (artist, title, sort_key(artist, title, lnf=True))
+        for artist, title in records
+    ]
+    rec_objs_sorted = sorted(rec_objs, key=lambda x: x[2])
+    sorted_titles = [x[1] for x in rec_objs_sorted]
+    expected_order = [
+        "The Greatest Ever [Coronet Records CXS-203]",  # charles, ray
+        "Ramones (2018) [Sire RR1 6020]",               # ramones
+        "Live In Japan (1977) [Mercury 6338 833]",      # runaways
+    ]
+    assert_eq(sorted_titles, expected_order, "Full record list should sort as expected with robust artist extraction")
+
     print("All sorting assertions passed.")
 
 
