@@ -611,6 +611,7 @@ def make_sort_keys(
       artist_clean = artist_clean[:idx].strip()
       break
   sort_artist_base = strip_articles(artist_clean).lower()
+  # Always apply LNF to the extracted artist_clean if enabled
   if last_name_first:
     flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
     if flipped:
