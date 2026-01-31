@@ -613,8 +613,8 @@ def make_sort_keys(
   if split_result:
     artist_clean = split_result[0].strip()
 
+  # Always apply LNF to the extracted first artist if enabled
   sort_artist_base = strip_articles(artist_clean).lower()
-  # Always apply LNF to the extracted artist_clean if enabled
   if last_name_first:
     flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
     if flipped:
