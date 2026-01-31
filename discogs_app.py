@@ -798,8 +798,32 @@ def collect_lp_rows(
       lnf_exclude=lnf_exclude,
       lnf_safe_bands=lnf_safe_bands,
     )
+    # If LNF flipping changed the sort_artist, update artist_display for output
+    display_artist = artist_disp
+    # Extract first artist for display update, matching make_sort_keys logic
+    artist_clean = strip_discogs_numeric_suffix(artist_disp).strip()
+    feature_markers = ["also featuring", "feat.", "featuring"]
+    lower_artist = artist_clean.lower()
+    for marker in feature_markers:
+      idx = lower_artist.find(marker)
+      if idx > 0:
+        artist_clean = artist_clean[:idx].strip()
+        lower_artist = artist_clean.lower()
+        break
+    split_regex = re.compile(r"\s*(/|&| and )\s*", re.IGNORECASE)
+    split_result = split_regex.split(artist_clean, maxsplit=1)
+    if split_result:
+      artist_clean = split_result[0].strip()
+    if last_name_first:
+      flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
+      if flipped:
+        # Replace only the first artist in the display string
+        # Find the original first artist in artist_disp and replace it
+        orig_first = split_result[0].strip() if split_result else artist_clean
+        # Use regex to replace only the first occurrence
+        display_artist = re.sub(rf'^{re.escape(orig_first)}', flipped, artist_disp, count=1)
     return ReleaseRow(
-      artist_display=artist_disp,
+      artist_display=display_artist,
       title=title,
       year=year,
       label=label,
