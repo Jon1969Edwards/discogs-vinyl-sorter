@@ -602,6 +602,13 @@ def make_sort_keys(
     idx = lower_artist.find(marker)
     if idx > 0:
       artist_clean = artist_clean[:idx].strip()
+      lower_artist = artist_clean.lower()
+      break
+  # If artist string contains '/', ' & ', or ' and ', use only the first artist for sorting
+  for sep in ["/", " & ", " and "]:
+    idx = lower_artist.find(sep)
+    if idx > 0:
+      artist_clean = artist_clean[:idx].strip()
       break
   sort_artist_base = strip_articles(artist_clean).lower()
   if last_name_first:
