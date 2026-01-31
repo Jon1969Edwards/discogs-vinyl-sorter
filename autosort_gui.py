@@ -913,7 +913,21 @@ class App:
       try:
         token = core.get_token(cfg.token or None)
         headers = core.discogs_headers(token, cfg.user_agent)
-        ident = core.get_identity(headers)
+        try:
+          ident = core.get_identity(headers)
+        except RuntimeError as e:
+          if '429' in str(e):
+            self._log("Rate limit reached. Please wait and try again.")
+            self.v_status.set("Rate limit reached. Waiting…")
+            # Temporarily disable Refresh button if present
+            if hasattr(self, 'btn_refresh'):
+              self.btn_refresh.config(state='disabled')
+              self.after(5000, lambda: self.btn_refresh.config(state='normal'))
+            # Wait a bit longer before next poll
+            time.sleep(5)
+            continue
+          else:
+            raise
         username = ident.get("username")
         if not username:
           raise RuntimeError("Could not determine username from token.")
