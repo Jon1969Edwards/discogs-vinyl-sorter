@@ -595,6 +595,14 @@ def make_sort_keys(
 
   # For artists, also drop Discogs numeric suffixes
   artist_clean = strip_discogs_numeric_suffix(artist_display).strip()
+  # If artist string contains 'Also Featuring', 'feat.', or 'featuring', use only the leading name for sorting
+  feature_markers = ["also featuring", "feat.", "featuring"]
+  lower_artist = artist_clean.lower()
+  for marker in feature_markers:
+    idx = lower_artist.find(marker)
+    if idx > 0:
+      artist_clean = artist_clean[:idx].strip()
+      break
   sort_artist_base = strip_articles(artist_clean).lower()
   if last_name_first:
     flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
