@@ -608,7 +608,15 @@ def make_sort_keys(
     flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
     if flipped:
       sort_artist_base = flipped
-  return (sort_artist_base, strip_articles(title).lower())
+  # Normalize title: remove trailing 'Minus ...', year in parentheses, and catalog info in brackets
+  main_title = title
+  # Remove 'Minus ...' and everything after
+  main_title = re.split(r"\bminus\b", main_title, flags=re.IGNORECASE)[0].strip()
+  # Remove trailing year in parentheses
+  main_title = re.sub(r"\s*\(\d{4}\)$", "", main_title).strip()
+  # Remove trailing catalog info in brackets
+  main_title = re.sub(r"\s*\[[^\]]+\]$", "", main_title).strip()
+  return (sort_artist_base, strip_articles(main_title).lower())
 
 
 def format_string(basic: Dict) -> str:
