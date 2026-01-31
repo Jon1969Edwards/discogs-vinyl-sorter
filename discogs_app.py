@@ -596,7 +596,7 @@ def make_sort_keys(
 
   # For artists, also drop Discogs numeric suffixes
   artist_clean = strip_discogs_numeric_suffix(artist_display).strip()
-  # If artist string contains 'Also Featuring', 'feat.', or 'featuring', use only the leading name for sorting
+  # Remove feature markers (e.g., 'Also Featuring', 'feat.', 'featuring')
   feature_markers = ["also featuring", "feat.", "featuring"]
   lower_artist = artist_clean.lower()
   for marker in feature_markers:
@@ -605,12 +605,14 @@ def make_sort_keys(
       artist_clean = artist_clean[:idx].strip()
       lower_artist = artist_clean.lower()
       break
-  # If artist string contains '/', ' & ', or ' and ', use only the first artist for sorting
-  for sep in ["/", " & ", " and "]:
-    idx = lower_artist.find(sep)
-    if idx > 0:
-      artist_clean = artist_clean[:idx].strip()
-      break
+
+  # Robustly split on '/', ' & ', or ' and ' (with any spacing), always use the first artist for sorting
+  # Use regex to split on the first occurrence of any separator
+  split_regex = re.compile(r"\s*(/|&| and )\s*", re.IGNORECASE)
+  split_result = split_regex.split(artist_clean, maxsplit=1)
+  if split_result:
+    artist_clean = split_result[0].strip()
+
   sort_artist_base = strip_articles(artist_clean).lower()
   # Always apply LNF to the extracted artist_clean if enabled
   if last_name_first:
