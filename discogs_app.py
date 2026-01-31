@@ -800,7 +800,7 @@ def collect_lp_rows(
     )
     # If LNF flipping changed the sort_artist, update artist_display for output
     display_artist = artist_disp
-    # Extract first artist for display update, matching make_sort_keys logic
+    # Extract first artist and remainder for display update, matching make_sort_keys logic
     artist_clean = strip_discogs_numeric_suffix(artist_disp).strip()
     feature_markers = ["also featuring", "feat.", "featuring"]
     lower_artist = artist_clean.lower()
@@ -811,17 +811,21 @@ def collect_lp_rows(
         lower_artist = artist_clean.lower()
         break
     split_regex = re.compile(r"\s*(/|&| and )\s*", re.IGNORECASE)
-    split_result = split_regex.split(artist_clean, maxsplit=1)
-    if split_result:
-      artist_clean = split_result[0].strip()
+    split_match = split_regex.search(artist_disp)
+    if split_match:
+      sep_start = split_match.start()
+      sep = split_match.group(0)
+      orig_first = artist_disp[:sep_start].strip()
+      remainder = artist_disp[sep_start:]
+    else:
+      orig_first = artist_disp.strip()
+      remainder = ""
     if last_name_first:
-      flipped = _last_name_first_key(artist_clean, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
+      # Use the same logic as make_sort_keys to get the first artist for flipping
+      artist_first = artist_clean
+      flipped = _last_name_first_key(artist_first, allow_3=lnf_allow_3, exclude_set=(lnf_exclude or set()), safe_bands=lnf_safe_bands)
       if flipped:
-        # Replace only the first artist in the display string
-        # Find the original first artist in artist_disp and replace it
-        orig_first = split_result[0].strip() if split_result else artist_clean
-        # Use regex to replace only the first occurrence
-        display_artist = re.sub(rf'^{re.escape(orig_first)}', flipped, artist_disp, count=1)
+        display_artist = flipped + remainder
     return ReleaseRow(
       artist_display=display_artist,
       title=title,
