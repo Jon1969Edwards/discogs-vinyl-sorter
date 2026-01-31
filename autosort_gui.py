@@ -212,7 +212,7 @@ def build_once(cfg: AutoConfig, log: callable) -> BuildResult:
     lp_strict=False,
     lp_probable=False,
     debug_stats=None,
-    last_name_first=True,
+    last_name_first=True,  # Always enable LNF sorting in GUI
     lnf_allow_3=False,
     lnf_exclude=set(),
     lnf_safe_bands=True,
