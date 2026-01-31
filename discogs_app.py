@@ -1,3 +1,5 @@
+
+from __future__ import annotations
 # LNF personal-artist override: treat these as personal, not band, for last-name-first flipping
 _LNF_FORCE_PERSONAL = {
   "edie brickell & new bohemians",
@@ -21,8 +23,6 @@ Usage examples:
   python discogs_app.py --user-agent "VinylSorter/1.0 (you@example.com)"
   python discogs_app.py --various-policy last --articles-extra "le,la,les,el,los,las,der,die,das"
 """
-
-from __future__ import annotations
 
 import argparse
 import csv
